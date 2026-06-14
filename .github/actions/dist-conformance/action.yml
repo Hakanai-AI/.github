@@ -1,0 +1,69 @@
+name: dist-conformance
+description: >
+  Assert a plugin's published dist is complete and its plugin.json metadata
+  matches source before it is committed/pushed. Guards the ops#286 drift class
+  (launcher.mjs missing, displayName/metadata never synced). Run as a step in the
+  sync-dist job AFTER the copy and BEFORE the dist commit — a failure blocks the
+  bad dist from shipping.
+
+inputs:
+  dist_dir:
+    description: Path to the checked-out dist repo (where files were copied to).
+    required: false
+    default: dist
+  source_plugin_json:
+    description: Path to the SOURCE plugin.json.
+    required: false
+    default: .claude-plugin/plugin.json
+  expected_version:
+    description: Release tag/version the dist plugin.json must equal (leading 'v' ok). Empty = skip version check.
+    required: false
+    default: ""
+  require_skills:
+    description: When 'true', assert dist/skills exists if the source has a skills/ dir.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -uo pipefail
+        D="${{ inputs.dist_dir }}"
+        S="${{ inputs.source_plugin_json }}"
+        fail=0
+        err(){ echo "::error::dist-conformance: $1"; fail=1; }
+
+        # 1. Required files present in the dist tree.
+        for f in launcher.mjs .mcp.json .claude-plugin/plugin.json; do
+          if [ ! -e "$D/$f" ]; then err "missing $D/$f"; fi
+        done
+
+        # 2. Skills parity — if source ships skills/, dist must too.
+        if [ "${{ inputs.require_skills }}" = "true" ] && [ -d skills ]; then
+          if [ ! -d "$D/skills" ]; then err "source has skills/ but $D/skills is missing"; fi
+        fi
+
+        # 3. Metadata parity — every non-version field of plugin.json must match source.
+        #    (sync copies source plugin.json then bumps only .version, so the only
+        #    legitimate difference is .version.)
+        if [ -e "$S" ] && [ -e "$D/.claude-plugin/plugin.json" ]; then
+          if ! diff <(jq -S 'del(.version)' "$S") <(jq -S 'del(.version)' "$D/.claude-plugin/plugin.json") >/dev/null 2>&1; then
+            err "plugin.json metadata drift (non-version fields differ source vs dist):"
+            diff <(jq -S 'del(.version)' "$S") <(jq -S 'del(.version)' "$D/.claude-plugin/plugin.json") || true
+          fi
+        fi
+
+        # 4. Version pin — dist plugin.json .version must equal the release tag.
+        if [ -n "${{ inputs.expected_version }}" ]; then
+          want="${{ inputs.expected_version }}"; want="${want#v}"
+          got="$(jq -r '.version' "$D/.claude-plugin/plugin.json" 2>/dev/null)"
+          if [ "$got" != "$want" ]; then err "dist plugin.json version=$got != expected=$want"; fi
+        fi
+
+        if [ "$fail" -ne 0 ]; then
+          echo "::error::dist-conformance FAILED — dist is incomplete or drifted; refusing to ship it."
+          exit 1
+        fi
+        echo "✅ dist-conformance OK — required files present, plugin.json metadata matches source."
