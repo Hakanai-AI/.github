@@ -23,6 +23,14 @@ inputs:
     description: When 'true', assert dist/skills exists if the source has a skills/ dir.
     required: false
     default: "true"
+  source_authoritative:
+    description: >
+      When 'true' (default): the plugin manifest lives in source and is cp'd to dist,
+      so assert dist plugin.json metadata == source + skills parity. When 'false'
+      (dist-authoritative packaging, e.g. agent-sessions-mcp where the manifest lives
+      only in dist): skip the source-compare; only assert dist files present + version.
+    required: false
+    default: "true"
 
 runs:
   using: composite
@@ -40,18 +48,23 @@ runs:
           if [ ! -e "$D/$f" ]; then err "missing $D/$f"; fi
         done
 
-        # 2. Skills parity — if source ships skills/, dist must too.
-        if [ "${{ inputs.require_skills }}" = "true" ] && [ -d skills ]; then
-          if [ ! -d "$D/skills" ]; then err "source has skills/ but $D/skills is missing"; fi
-        fi
+        # 2 + 3 run only in source-authoritative mode (manifest lives in source).
+        if [ "${{ inputs.source_authoritative }}" = "true" ]; then
+          # 2. Skills parity — if source ships skills/, dist must too.
+          if [ "${{ inputs.require_skills }}" = "true" ] && [ -d skills ]; then
+            if [ ! -d "$D/skills" ]; then err "source has skills/ but $D/skills is missing"; fi
+          fi
 
-        # 3. Metadata parity — every non-version field of plugin.json must match source.
-        #    (sync copies source plugin.json then bumps only .version, so the only
-        #    legitimate difference is .version.)
-        if [ -e "$S" ] && [ -e "$D/.claude-plugin/plugin.json" ]; then
-          if ! diff <(jq -S 'del(.version)' "$S") <(jq -S 'del(.version)' "$D/.claude-plugin/plugin.json") >/dev/null 2>&1; then
-            err "plugin.json metadata drift (non-version fields differ source vs dist):"
-            diff <(jq -S 'del(.version)' "$S") <(jq -S 'del(.version)' "$D/.claude-plugin/plugin.json") || true
+          # 3. Metadata parity — every non-version field of plugin.json must match source.
+          #    (sync copies source plugin.json then bumps only .version, so the only
+          #    legitimate difference is .version.)
+          if [ -e "$S" ] && [ -e "$D/.claude-plugin/plugin.json" ]; then
+            if ! diff <(jq -S 'del(.version)' "$S") <(jq -S 'del(.version)' "$D/.claude-plugin/plugin.json") >/dev/null 2>&1; then
+              err "plugin.json metadata drift (non-version fields differ source vs dist):"
+              diff <(jq -S 'del(.version)' "$S") <(jq -S 'del(.version)' "$D/.claude-plugin/plugin.json") || true
+            fi
+          else
+            err "source plugin.json ($S) or dist plugin.json missing — source_authoritative expects both"
           fi
         fi
 
@@ -66,4 +79,8 @@ runs:
           echo "::error::dist-conformance FAILED — dist is incomplete or drifted; refusing to ship it."
           exit 1
         fi
-        echo "✅ dist-conformance OK — required files present, plugin.json metadata matches source."
+        if [ "${{ inputs.source_authoritative }}" = "true" ]; then
+          echo "✅ dist-conformance OK (source-authoritative) — files present, plugin.json metadata == source."
+        else
+          echo "✅ dist-conformance OK (dist-authoritative) — files present + version pinned (source-compare skipped)."
+        fi
