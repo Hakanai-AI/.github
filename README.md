@@ -27,8 +27,11 @@ Pin to a tag (`@v1`), never `@main` — these are org-wide blast radius.
 
 ## Access
 
-Private repo; Actions access set to **organization** so private plugin repos can
-consume these actions/workflows.
+Public repo (org-defaults). Actions access is available to every repo in the
+org, so both public and private plugin repos can consume these actions/workflows.
+Made public (ops#287 follow-up) so Dependabot in consumer repos can resolve the
+reusable workflow ref — a private target caused `git_dependencies_not_reachable`
+across ~30 repos.
 
 ## Roadmap (ops#287)
 
