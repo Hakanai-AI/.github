@@ -1,0 +1,12 @@
+version: 2
+updates:
+  # Keep the reusable workflow + composite actions' own action pins current.
+  # Consumers reference these via `uses:`, so a stale pin here propagates org-wide.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: tuesday
+      time: "04:17"
+    commit-message:
+      prefix: "ci"
