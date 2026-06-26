@@ -44,9 +44,28 @@ runs:
         err(){ echo "::error::dist-conformance: $1"; fail=1; }
 
         # 1. Required files present in the dist tree.
-        for f in launcher.mjs .mcp.json .claude-plugin/plugin.json; do
+        #    launcher.mjs + plugin.json are mandatory for every launcher-pattern plugin.
+        for f in launcher.mjs .claude-plugin/plugin.json; do
           if [ ! -e "$D/$f" ]; then err "missing $D/$f"; fi
         done
+
+        # 1b. .mcp.json — required only when the plugin exposes an MCP server.
+        #     An MCP-server plugin ships a .mcp.json so Claude Code starts the
+        #     server subprocess; a skills-only / CLI-launcher plugin (no MCP
+        #     server — e.g. daemon-installer, whose skills shell out to a
+        #     one-shot CLI) legitimately has none, and an empty one would be a
+        #     hack (Claude Code would try to boot a server that isn't there).
+        #     - source-authoritative: require dist/.mcp.json IFF source ships one (parity).
+        #     - dist-authoritative: source isn't compared, so keep it mandatory
+        #       (the dist tree must be self-complete; all current dist-authoritative
+        #       packages are MCP servers).
+        if [ "${{ inputs.source_authoritative }}" = "true" ]; then
+          if [ -e .mcp.json ] && [ ! -e "$D/.mcp.json" ]; then
+            err "source ships .mcp.json but $D/.mcp.json is missing (sync gap)"
+          fi
+        else
+          if [ ! -e "$D/.mcp.json" ]; then err "missing $D/.mcp.json"; fi
+        fi
 
         # 2 + 3 run only in source-authoritative mode (manifest lives in source).
         if [ "${{ inputs.source_authoritative }}" = "true" ]; then
