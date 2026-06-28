@@ -4,9 +4,9 @@ on:
   workflow_call:
     secrets:
       RELEASE_BOT_CLIENT_ID:
-        required: true
+        required: false
       RELEASE_BOT_PRIVATE_KEY:
-        required: true
+        required: false
 
 permissions:
   pull-requests: write
