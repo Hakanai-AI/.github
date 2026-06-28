@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   dependabot:
-    runs-on: hakanai-runners
+    runs-on: ubuntu-latest
     if: github.event.pull_request.user.login == 'dependabot[bot]'
     steps:
       - name: Generate Hakanai Bot App token
