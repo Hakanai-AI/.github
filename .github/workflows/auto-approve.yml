@@ -8,9 +8,13 @@ on:
       RELEASE_BOT_PRIVATE_KEY:
         required: false
 
-permissions:
-  pull-requests: write
-  contents: write
+# No elevated GITHUB_TOKEN permissions needed: every step authenticates with
+# the GitHub App token (create-github-app-token), not the default GITHUB_TOKEN.
+# Requesting write here exceeded the default token cap on repos whose
+# default_workflow_permissions is "read", which fails the run at startup
+# ("workflow file issue") org-wide. Omit the block so the run never requests
+# more than the repo's cap. (ops#305)
+permissions: {}
 
 jobs:
   dependabot:
