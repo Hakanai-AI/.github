@@ -6,10 +6,10 @@ description: >-
 
 inputs:
   status:
-    description: Result to report (e.g. ${{ needs.test-go.result }}).
+    description: "Result to report. Pass the upstream job result, e.g. needs.test-go.result."
     required: true
   webhook_secret:
-    description: HMAC secret. Pass ${{ secrets.WEBHOOK_SECRET }} (composite actions can't read secrets directly).
+    description: "HMAC secret. Pass secrets.WEBHOOK_SECRET (composite actions can't read secrets directly)."
     required: true
   webhook_url:
     description: Override the webhook endpoint.
