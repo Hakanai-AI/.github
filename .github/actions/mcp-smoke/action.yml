@@ -23,7 +23,8 @@ inputs:
       Example: ./cmd/line-plugin
     required: true
   binary_name:
-    description: Filename for the built binary. Example: line-plugin
+    description: >-
+      Filename for the built binary. Example: line-plugin
     required: true
   mcp_timeout:
     description: Seconds to wait for the MCP initialize response.
