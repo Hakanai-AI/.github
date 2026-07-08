@@ -8,13 +8,20 @@ name: Sync version + runtime to dist repo (reusable)
 # createCommitOnBranch rejects the WHOLE commit if a queued deletion is absent
 # at expectedHeadOid, so one bad entry used to redden the entire sync.
 #
-# Caller (a plugin's release-goreleaser.yml) uses it like:
+# Handles both existing shapes:
+#   - token: agent-skills passes RELEASE_BOT_CLIENT_ID; the channel plugins pass
+#     RELEASE_BOT_APP_ID. Both are accepted (empty one is ignored by the action).
+#   - conformance: channel plugins run the dist-conformance composite; agent-skills
+#     does not. Gated by run_conformance.
+#
+# Caller (a plugin's release-goreleaser.yml):
 #   sync-dist-version:
 #     needs: goreleaser
 #     uses: Hakanai-AI/.github/.github/workflows/sync-dist-version.yml@main
 #     with:
 #       dist_repo: claude-plugin-discord-dist
 #       sync_paths: "skills launcher.mjs .mcp.json README.md .claude-plugin"
+#       run_conformance: true
 #     secrets: inherit
 
 on:
@@ -32,9 +39,21 @@ on:
           version bump. e.g. "skills launcher.mjs .mcp.json README.md .claude-plugin"
         required: true
         type: string
+      run_conformance:
+        description: "Run the dist-conformance composite after sync (channel plugins: true; agent-skills: false)."
+        required: false
+        type: boolean
+        default: false
+      source_plugin_json:
+        description: "Path to the source plugin.json (for conformance + version bump)."
+        required: false
+        type: string
+        default: ".claude-plugin/plugin.json"
     secrets:
       RELEASE_BOT_CLIENT_ID:
-        required: true
+        required: false
+      RELEASE_BOT_APP_ID:
+        required: false
       RELEASE_BOT_PRIVATE_KEY:
         required: true
 
@@ -55,6 +74,8 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@v3
         with:
+          # Both accepted; a repo sets exactly one (the empty one is ignored).
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
           client-id: ${{ secrets.RELEASE_BOT_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
           owner: Hakanai-AI
@@ -82,6 +103,14 @@ jobs:
           jq --arg v "${{ steps.version.outputs.version }}" '.version = $v' \
             dist/.claude-plugin/plugin.json > tmp.json
           mv tmp.json dist/.claude-plugin/plugin.json
+
+      - name: Conformance check (block incomplete/stale dist)
+        if: ${{ inputs.run_conformance }}
+        uses: Hakanai-AI/.github/actions/dist-conformance@main
+        with:
+          dist_dir: dist
+          source_plugin_json: ${{ inputs.source_plugin_json }}
+          expected_version: ${{ steps.version.outputs.version }}
 
       - name: Collect dist changes
         id: dist-changes
