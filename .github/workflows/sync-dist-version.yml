@@ -1,0 +1,164 @@
+name: Sync version + runtime to dist repo (reusable)
+
+# Reusable sync-dist-version job. Extracted from the per-repo copies in every
+# plugin's release-goreleaser.yml so the logic lives in ONE place (ops#389).
+# Carries the agent-skills#353 hardening: classify add/delete by git's own
+# --name-status verdict (not a filesystem `[ -f ]` probe) and verify each
+# deletion exists at the dist repo's HEAD before queuing it — GraphQL's
+# createCommitOnBranch rejects the WHOLE commit if a queued deletion is absent
+# at expectedHeadOid, so one bad entry used to redden the entire sync.
+#
+# Caller (a plugin's release-goreleaser.yml) uses it like:
+#   sync-dist-version:
+#     needs: goreleaser
+#     uses: Hakanai-AI/.github/.github/workflows/sync-dist-version.yml@main
+#     with:
+#       dist_repo: claude-plugin-discord-dist
+#       sync_paths: "skills launcher.mjs .mcp.json README.md .claude-plugin"
+#     secrets: inherit
+
+on:
+  workflow_call:
+    inputs:
+      dist_repo:
+        description: "Dist repo name under the Hakanai-AI org (e.g. claude-plugin-discord-dist)."
+        required: true
+        type: string
+      sync_paths:
+        description: >
+          Space-separated top-level paths to mirror into the dist repo
+          (dirs or files). Each is rm-rf'd then copied if it exists on disk.
+          Always include `.claude-plugin` so plugin.json is present for the
+          version bump. e.g. "skills launcher.mjs .mcp.json README.md .claude-plugin"
+        required: true
+        type: string
+    secrets:
+      RELEASE_BOT_CLIENT_ID:
+        required: true
+      RELEASE_BOT_PRIVATE_KEY:
+        required: true
+
+jobs:
+  sync-dist-version:
+    runs-on: hakanai-runners
+    steps:
+      - name: Checkout source repo
+        uses: actions/checkout@v7
+
+      - name: Extract version from manifest
+        id: version
+        run: |
+          VERSION=$(jq -r '.["."]' .release-please-manifest.json)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Generate App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.RELEASE_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: Hakanai-AI
+          repositories: ${{ inputs.dist_repo }}
+
+      - name: Checkout dist repo
+        uses: actions/checkout@v7
+        with:
+          repository: Hakanai-AI/${{ inputs.dist_repo }}
+          token: ${{ steps.app-token.outputs.token }}
+          path: dist
+
+      - name: Sync runtime paths to dist
+        run: |
+          for p in ${{ inputs.sync_paths }}; do
+            rm -rf "dist/$p"
+            if [ -e "$p" ]; then
+              # -r handles both files and directories uniformly.
+              cp -r "$p" "dist/$p"
+            fi
+          done
+
+      - name: Update plugin.json version
+        run: |
+          jq --arg v "${{ steps.version.outputs.version }}" '.version = $v' \
+            dist/.claude-plugin/plugin.json > tmp.json
+          mv tmp.json dist/.claude-plugin/plugin.json
+
+      - name: Collect dist changes
+        id: dist-changes
+        run: |
+          cd dist
+
+          git add -A
+          # --no-renames + --name-status (not --name-only): we need git's own
+          # A/M/D verdict per path, not a re-derived one.
+          CHANGED=$(git diff --cached --name-status --no-renames)
+          if [ -z "$CHANGED" ]; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          echo "has_changes=true" >> $GITHUB_OUTPUT
+
+          HEAD_OID=$(git rev-parse HEAD)
+
+          # Temp files + --rawfile/--slurpfile avoid jq ARG_MAX (~128KB Linux)
+          # when content blobs grow large (agent-skills v0.5.11 incident 2026-06-04).
+          ADDITIONS_FILE=$(mktemp)
+          echo "[]" > "$ADDITIONS_FILE"
+          DELETIONS_FILE=$(mktemp)
+          echo "[]" > "$DELETIONS_FILE"
+
+          # agent-skills#353: branch on git's status letter, not a filesystem
+          # `[ -f ]` probe, and for D entries verify the path exists at HEAD_OID
+          # before queuing the deletion — skip + warn instead of failing the
+          # whole GraphQL commit on a nonexistent-path deletion.
+          while IFS=$'\t' read -r status f; do
+            case "$status" in
+              D*)
+                if git cat-file -e "${HEAD_OID}:${f}" 2>/dev/null; then
+                  NEW_DELETIONS=$(mktemp)
+                  jq --arg p "$f" '. + [{"path": $p}]' "$DELETIONS_FILE" > "$NEW_DELETIONS"
+                  mv "$NEW_DELETIONS" "$DELETIONS_FILE"
+                else
+                  echo "::warning::skipping deletion for '$f' — not present at dist HEAD $HEAD_OID; no-op"
+                fi
+                ;;
+              *)
+                if [ -f "$f" ]; then
+                  B64_FILE=$(mktemp)
+                  base64 -w 0 "$f" > "$B64_FILE"
+                  NEW_ADDITIONS=$(mktemp)
+                  jq --arg p "$f" --rawfile c "$B64_FILE" '. + [{"path": $p, "contents": $c}]' "$ADDITIONS_FILE" > "$NEW_ADDITIONS"
+                  mv "$NEW_ADDITIONS" "$ADDITIONS_FILE"
+                  rm -f "$B64_FILE"
+                else
+                  echo "::warning::'$f' has diff status '$status' but is not a regular file on disk — skipping"
+                fi
+                ;;
+            esac
+          done <<EOF
+          $CHANGED
+          EOF
+
+          jq -c -n \
+            --arg repoNWO "Hakanai-AI/${{ inputs.dist_repo }}" \
+            --arg headOid "$HEAD_OID" \
+            --arg headline "chore: sync version and runtime to ${{ steps.version.outputs.version }}" \
+            --slurpfile additions "$ADDITIONS_FILE" \
+            --slurpfile deletions "$DELETIONS_FILE" \
+            '{input:{branch:{repositoryNameWithOwner:$repoNWO,branchName:"main"},expectedHeadOid:$headOid,message:{headline:$headline},fileChanges:{additions:$additions[0],deletions:$deletions[0]}}}' \
+            > /tmp/graphql-vars.json
+
+          rm -f "$ADDITIONS_FILE" "$DELETIONS_FILE"
+
+      - name: Commit via GraphQL (signed commit)
+        if: steps.dist-changes.outputs.has_changes == 'true'
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const vars = JSON.parse(require('fs').readFileSync('/tmp/graphql-vars.json', 'utf8'));
+            const r = await github.graphql(
+              'mutation($input: CreateCommitOnBranchInput!){createCommitOnBranch(input:$input){commit{url oid}}}',
+              vars,
+            );
+            core.info(`dist commit: ${r.createCommitOnBranch.commit.url}`);
