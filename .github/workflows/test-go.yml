@@ -41,6 +41,17 @@ jobs:
       - name: Install dependencies
         run: go mod download -x && go mod tidy -v
 
+      - name: Verify go.mod and go.sum are tidy
+        # `go mod tidy` above may rewrite go.mod/go.sum; fail if it did, so the
+        # drift is fixed + committed in-repo rather than silently masked. Without
+        # this, a tag push later fails goreleaser with "git is in a dirty state"
+        # (ops#237). Restores the guard the per-repo inline test-go had.
+        run: |
+          if ! git diff --exit-code -- go.mod go.sum; then
+            echo "::error::go.mod or go.sum changed after 'go mod tidy'. Run 'go mod tidy' locally and commit the result."
+            exit 1
+          fi
+
       - name: Build
         run: go build ./...
 
