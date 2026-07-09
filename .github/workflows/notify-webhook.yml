@@ -1,0 +1,28 @@
+name: Notify webhook (reusable)
+
+# Org-level reusable wrapper around the existing actions/notify-webhook
+# composite (ops#287) so a consuming repo can `uses:` one workflow_call
+# instead of a job+step. Does NOT re-implement the HMAC signing — delegates
+# to the composite action to avoid a second copy of that logic (ops#393
+# Phase 1).
+
+on:
+  workflow_call:
+    inputs:
+      status:
+        description: "Result to report, e.g. needs.test-go.result."
+        type: string
+        required: true
+    secrets:
+      WEBHOOK_SECRET:
+        description: "HMAC secret for webhooks.hakanai.ai. Pass secrets.WEBHOOK_SECRET."
+        required: true
+
+jobs:
+  notify-webhook:
+    runs-on: hakanai-runners
+    steps:
+      - uses: Hakanai-AI/.github/actions/notify-webhook@main
+        with:
+          status: ${{ inputs.status }}
+          webhook_secret: ${{ secrets.WEBHOOK_SECRET }}

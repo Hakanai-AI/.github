@@ -1,0 +1,48 @@
+name: Test - Go (reusable)
+
+# Org-level reusable Go build+test workflow (ops#393 Phase 1). Mirrors the
+# build step of the per-repo test-go.yml (e.g. Hakanai-AI/claude-plugin-line)
+# plus a `go test ./...` step. goreleaser-dryrun and mcp-smoke stay inline
+# per-repo (plugin-specific) — not extracted here.
+
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        description: "Go version to install (e.g. '1.23')."
+        type: string
+        default: "1.23"
+    secrets:
+      PAT:
+        description: "GitHub PAT for private Hakanai-AI module access. Pass secrets.PAT."
+        required: true
+
+env:
+  GOPRIVATE: github.com/Hakanai-AI,github.com/chenjr0719
+  GONOSUMCHECK: github.com/Hakanai-AI,github.com/chenjr0719
+
+jobs:
+  test-go:
+    runs-on: hakanai-runners
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ inputs.go-version }}
+          cache: true
+
+      - name: Configure private module access
+        uses: Hakanai-AI/.github/actions/setup-private-modules@main
+        with:
+          pat: ${{ secrets.PAT }}
+
+      - name: Install dependencies
+        run: go mod download -x && go mod tidy -v
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test ./...

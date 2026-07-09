@@ -1,0 +1,20 @@
+name: Setup private module access
+description: >-
+  Configure git to authenticate to github.com with a PAT so `go mod download`
+  (GOPRIVATE=github.com/Hakanai-AI,...) can resolve private Hakanai-AI Go
+  modules. Org-level extraction of the per-repo "Configure private module
+  access" step (ops#393 Phase 1).
+
+inputs:
+  pat:
+    description: "GitHub PAT with read access to private Hakanai-AI repos. Pass secrets.PAT."
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Configure private module access
+      shell: bash
+      env:
+        PAT: ${{ inputs.pat }}
+      run: git config --global url."https://${PAT}@github.com/".insteadOf "https://github.com/"
