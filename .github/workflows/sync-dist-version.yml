@@ -49,6 +49,16 @@ on:
         required: false
         type: string
         default: ".claude-plugin/plugin.json"
+      source_authoritative:
+        description: >
+          Passed through to dist-conformance. 'true' (default, channel plugins):
+          the plugin manifest lives in source and is compared to dist. 'false'
+          (non-plugin repos, e.g. MCP servers/daemons with no
+          .claude-plugin/plugin.json in source): skip the source-vs-dist
+          plugin.json compare; only assert dist files present + version.
+        required: false
+        type: boolean
+        default: true
     secrets:
       RELEASE_BOT_CLIENT_ID:
         required: false
@@ -111,6 +121,7 @@ jobs:
           dist_dir: dist
           source_plugin_json: ${{ inputs.source_plugin_json }}
           expected_version: ${{ steps.version.outputs.version }}
+          source_authoritative: ${{ inputs.source_authoritative }}
 
       - name: Collect dist changes
         id: dist-changes
